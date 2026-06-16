@@ -1,0 +1,8 @@
+1. The QKV Formula & Dot ProductConcept: Query is what a token is looking for, Key is what a token contains, and Value is its actual meaning.Why it is used: The dot product is the standard mathematical way to measure similarity between two vectors. It is highly optimized for GPU hardware and requires no extra learnable parameters inside the operation.
+
+2. Masking "The Future"Concept: When generating text, a model can only look at past words, never future ones.How it works: During training, a mask overrides the scores of all upcoming "future" words by setting them to negative infinity. This ensures the model learns to predict the next word without cheating by peeking ahead.
+
+3. Softmax & Attention WeightsConcept: Softmax is a function that converts raw, unbounded numbers into a clean probability distribution.How it works: It forces all the dot-product scores into positive fractions that sum exactly to 1. These fractions act as percentages, allowing the model to create a weighted average of the Value ($V$) matrix based on relevance.
+
+
+4.Scaling by sqrt{d_k} Concept: d_k is the dimensional length of the Key vectors.Why the square root: As vectors get longer, their dot products yield massively inflated numbers. Large numbers break the Softmax function by pushing it into flat zones where gradientsvanish and the model stops learning. Dividing the scores by sqrt{d_k} hrinks the variance back down to a stable range.
