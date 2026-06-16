@@ -30,8 +30,8 @@ Since this relies purely on standard C++, you can compile it directly from your 
 
 ```bash
 # Clone the repository
-git clone [https://github.com/yourusername/bare-metal-attention.git](https://github.com/yourusername/bare-metal-attention.git)
-cd bare-metal-attention
+git clone [https://github.com/yourusername/bare-metal-attention.git](https://github.com/yourusername/baremetal-attention.git)
+cd baremetal-attention
 
 # Compile the engine
 g++ main.cpp -o main
