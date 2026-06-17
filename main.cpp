@@ -28,6 +28,62 @@ struct Matrix {
 	}
 };
 
+struct QuantizedMatrix {
+    int rows_cnt;
+    int cols_cnt;
+
+    std::vector<float> scales; // one scaled factor per row
+    std::vector<std::vector<u_int8_t>> data; // packed 4-bit weights
+
+    QuantizedMatrix(int r, int c): rows_cnt(r), cols_cnt(c){
+        scales.resize(r,0.0f);
+        int byte_cols = (c+1)/2; // // Width is halved because we pack 2 numbers into 1 byte
+        data.resize(r, std::vector<u_int8_t>(byte_cols, 0));
+    }
+};
+
+QuantizedMatrix quantize(const Matrix& W) {
+    QuantizedMatrix Q(W.rows(), W.cols());
+    
+    for (int i = 0; i < W.rows(); ++i) {
+        // Step 1: Find the absolute maximum value in the row
+        float max_val = 0.0f;
+        for (int j = 0; j < W.cols(); ++j) {
+            float val = std::abs(W.data[i][j]);
+            if (val > max_val) max_val = val;
+        }
+        
+        // Step 2: Calculate the row scale. 
+        // We divide by 7.0f because a signed 4-bit integer maxes out at 7.
+        float scale = (max_val == 0.0f) ? 1.0f : max_val / 7.0f;
+        Q.scales[i] = scale;
+        
+        // Step 3: Quantize and pack two floats into one byte
+        for (int j = 0; j < W.cols(); j += 2) {
+            // First 4-bit chunk
+            float v0 = W.data[i][j];
+            int q0 = std::round(v0 / scale);
+            if (q0 > 7) q0 = 7;     // Clamp to max 4-bit
+            if (q0 < -8) q0 = -8;   // Clamp to min 4-bit
+            
+            // Second 4-bit chunk
+            int q1 = 0;
+            if (j + 1 < W.cols()) {
+                float v1 = W.data[i][j + 1];
+                q1 = std::round(v1 / scale);
+                if (q1 > 7) q1 = 7;
+                if (q1 < -8) q1 = -8;
+            }
+            
+            // Bitwise Packing: 
+            // Mask with 0x0F to grab the bottom 4 bits, then shift q1 left by 4 bits.
+            u_int8_t packed = (q0 & 0x0F) | ((q1 & 0x0F) << 4);
+            Q.data[i][j / 2] = packed;
+        }
+    }
+    return Q;
+}
+
 Matrix matmul(const Matrix& A, const Matrix& B){
 	if(A.cols() != B.rows()) {
 		throw std::invalid_argument("Shape mismatch, rows and cols must be same");
@@ -60,6 +116,41 @@ Matrix matmul(const Matrix& A, const Matrix& B){
     }
 	
 	return C;
+}
+
+Matrix matmul(const Matrix& A, const QuantizedMatrix& B) {
+    if (A.cols() != B.rows_cnt) {
+        throw std::invalid_argument("Shape mismatch in quantized matmul");
+    }
+    
+    Matrix C(A.rows(), B.cols_cnt);
+
+    for (int i = 0; i < A.rows(); ++i) {
+        for (int k = 0; k < A.cols(); ++k) {
+            float a_val = A.data[i][k];
+            float scale = B.scales[k];
+            
+            // Unpack and multiply on the fly
+            for (int j = 0; j < B.cols_cnt; j += 2) {
+                u_int8_t packed = B.data[k][j / 2];
+                
+                // Unpack the first 4 bits (q0)
+                int8_t q0 = packed & 0x0F;
+                if (q0 > 7) q0 -= 16; // C++ sign extension trick for negative numbers
+                float v0 = q0 * scale;
+                C.data[i][j] += a_val * v0;
+                
+                // Unpack the second 4 bits (q1)
+                if (j + 1 < B.cols_cnt) {
+                    int8_t q1 = (packed >> 4) & 0x0F;
+                    if (q1 > 7) q1 -= 16;
+                    float v1 = q1 * scale;
+                    C.data[i][j + 1] += a_val * v1;
+                }
+            }
+        }
+    }
+    return C;
 }
 
 
@@ -335,10 +426,16 @@ int main() {
         {0.0f, 0.2f, 0.1f, -0.3f}
     };
 
-    // Run through the FFN
-    Matrix ffn_output = feed_forward(norm_1, W1, W2);
+    std::cout << "Quantizing W1 and W2 to 4-bit...\n";
+    QuantizedMatrix W1_quant = quantize(W1);
+    QuantizedMatrix W2_quant = quantize(W2);
+
+    // Modified Feed-Forward using quantized matrices
+    Matrix hidden = matmul(norm_1, W1_quant);
+    hidden = relu(hidden);
+    Matrix ffn_output = matmul(hidden, W2_quant);
     
-    // Residual Connection: Add norm_1 to FFN output
+    // Residual Connection
     Matrix residual_2 = add(norm_1, ffn_output);
     
     // Final Layer Normalization
@@ -347,6 +444,4 @@ int main() {
     std::cout << "Final Encoder Output Matrix [2x4]:\n";
     final_encoder_output.print();
     std::cout << "--- Forward Pass Complete ---\n";
-
-    return 0;
 }
