@@ -2,6 +2,7 @@
 #include<vector>
 #include<stdexcept>
 #include<cmath>
+#include<immintrin.h> // Library for using Intel based SIMD optimizations
 
 struct Matrix {
 	std::vector<std::vector<float>> data;
@@ -34,16 +35,31 @@ Matrix matmul(const Matrix& A, const Matrix& B){
 	// output shape
 	Matrix C(A.rows(), B.cols());
 
-	// standard O(n^3) dot product code
-	
 	for(int i=0;i<A.rows();++i){
-		for(int j=0;j<B.cols();++j){
-			for(int k=0;k<A.cols();++k){
-				C.data[i][j] += A.data[i][k] * B.data[k][j];
-			}
-		}
-	}
-	return C;	
+        for(int k=0;k<A.cols();++k){
+
+            float a_val = A.data[i][k];
+            __m256 a_vec = _mm256_set1_ps(a_val); //Broadcast A[i][k] into a 256-bit register
+            
+            int j=0;
+
+            for(;j<=B.cols()-8;j+=8){ // The SIMD Loop (Processes 8 floats at a time)
+                __m256 b_vec = _mm256_loadu_ps(&B.data[k][j]); //Load 8 floats from B and C into AVX registers
+                __m256 c_vec = _mm256_loadu_ps(&C.data[i][j]);
+
+                c_vec = _mm256_fmadd_ps(a_vec, b_vec, c_vec); //Fused Multiply-Add (FMA): C = (A * B) + C
+                
+                _mm256_storeu_ps(&C.data[i][j], c_vec);//// Store the 8 floats back to memory
+            }
+
+            //The Tail Loop for remaining elements
+            for (; j < B.cols(); ++j) {
+                C.data[i][j] += a_val * B.data[k][j];
+            }
+        }
+    }
+	
+	return C;
 }
 
 
